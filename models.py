@@ -52,25 +52,20 @@ class Users(UserMixin, Base):
                   'activated': user.activated}  # , 'rank': rank
         return result
 
-class Ranking(Base):
-    __tablename__ = 'ranking'
-    id = db.Column(db.Integer(), primary_key=True)
-    name = db.Column(db.String(80), unique=True)
-    description = db.Column(db.String(255))
 
 class Ranks(Base):
     __tablename__ = 'ranks'
     id = db.Column('id', db.Integer, primary_key=True)
     uid = db.Column('uid', db.Integer, ForeignKey(Users.id))
-    rank = db.Column('rank', db.Integer, ForeignKey(Ranking.id))
+    rank = db.Column('rank', db.Integer, default=0)
 
     user = relationship('Users')
-    ranking = relationship('Ranking') 
 
     @staticmethod
     def build_rank_dict(rank):
         result = {'rank': rank.rank}
         return result
+
 
 class Events(Base):
     __tablename__ = 'events'

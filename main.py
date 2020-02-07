@@ -5,20 +5,29 @@ import string
 from datetime import datetime
 
 import bcrypt
-from flask import jsonify, request, render_template
+from flask import jsonify, request
 from flask_cors import CORS
 from flask_jwt import JWT
 from flask_jwt_extended import create_access_token, jwt_required, get_jwt_identity, jwt_optional
-from flask_login import login_user, login_required, logout_user, current_user
+from flask_login import LoginManager, login_user, login_required, logout_user, current_user
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
-from __init__ import app, db, Base, engine,login_manager
+from __init__ import app, db, Base
+from config.herokudbconfig import pg_config
 from models import Events, Users, Categories, EventAnalytics, Ranks
-from mailToken import generate_confirmation_token, confirm_token, getTokenEmail
-from emailer import send_email
 
 CORS(app)
 
-url = "wocpr.com"
+app.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql://%(user)s:\
+%(password)s@%(host)s:%(port)s/%(dbname)s' % pg_config
+app.config['SECRET_KEY'] = "THISISSECRET"
+login_manager = LoginManager()
+login_manager.init_app(app)
+Session = sessionmaker(autoflush=False)
+engine = create_engine(app.config['SQLALCHEMY_DATABASE_URI'])
+
+url = "127.0.0.1"
 upload_folder = '/var/www/html/upload'
 
 if (not os.path.exists(upload_folder)):
@@ -90,18 +99,10 @@ def mobile_register():
         )
         db.session.add(new_user)
         db.session.commit()
-        token = generate_confirmation_token(new_user.email) 
-
-        confirm_url = 'https://wocpr.com/confirm/'+token 
-        html = render_template('confirmationEmail.html', confirm_url=confirm_url)
-        subject = "What's On Campus - Confirm your email"
-        send_email(new_user.email, subject, html)
-
         access_token = create_access_token(identity=request.form['email'], expires_delta=False)
         return jsonify(access_token=access_token, displayname=request.form['displayname']), 201
     else:
         return jsonify(response="Error has occured"), 500
-
 
 
 @app.route('/WhatsOnCampus/mobile/login', methods=['POST'])
@@ -186,7 +187,7 @@ def home():
     return "Welcome to What's on Campus!"
 
 
-@app.route('/WhatsOnCampus/ranks')
+@app.route('/WhatsOnCampus/ranks/')
 @jwt_required
 def getRanks():
     username = get_jwt_identity()
@@ -291,73 +292,20 @@ def changePassword():
     else:
         return jsonify(success=False, response="New password is equal to current password"), 400
 
-@app.route('/WhatsOnCampus/confirm/<token>', methods=['GET'])
-def confirm_email(token): 
-    try:
-        email = confirm_token(token)
-    except:
-        return jsonify(response="The confirmation link is invalid or has expired", success=False), 400
 
-    user = db.session.query(Users).filter_by(email=email).first_or_404()
-    if user.activated:
-        return jsonify(response="Account already activated. Please login", success=False), 400 
-    else:
-        user.activated = True
-        db.session.commit()
-        return jsonify(response='You have confirmed your account. Thanks!', success=True), 201
+@app.route('/WhatsOnCampus/activate', methods=['POST'])
+def activateAccount():
+    return True
 
-@app.route('/WhatsOnCampus/resendactivation/<token>', methods=['GET']) 
-def resendActivation(token): 
-    email = getTokenEmail(token)
-    user = db.session.query(Users).filter_by(email=email).first()
-    
-    if user: 
-        token = generate_confirmation_token(user.email) 
 
-        confirm_url = 'https://wocpr.com/confirm/'+token 
-        html = render_template('confirmationEmail.html', confirm_url=confirm_url)
-        subject = "What's On Campus - Confirm your email"
-        send_email(user.email, subject, html)
-        return jsonify(success=True, response="Activation email sent!"), 201
-    else: 
-        return jsonify(success=False, response="Email doesn't exists"), 400
+@app.route('/WhatsOnCampus/resetpassword', methods=['POST'])
+def resetPassword():
+    #Person inputs their email
+    #A confirmation code is sent to email with random code for confirmation
+    #If code hasn't expired.
+    #Person inputs new password. Password gets updated
+    return jsonify(msg="reset pass")
 
-@app.route('/WhatsOnCampus/resetpassword/', defaults={'token': None}, methods=['POST'])
-@app.route('/WhatsOnCampus/resetpassword/<token>', methods=['POST'])
-def resetPassword(token):
-    if token: 
-        try:
-            email = confirm_token(token)
-            newPassword = request.form['newPassword']
-            confirmPassword = request.form['confirmPassword']
-            
-            user = db.session.query(Users).filter_by(email=email).first()
-            
-            if newPassword == confirmPassword:
-                hashed_password = bcrypt.hashpw(newPassword.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
-                user.password = hashed_password
-                db.session.commit()
-                return jsonify(success=True, response="Successfully changed password!"), 201
-            else:
-                return jsonify(success=False, response="Confirm password doesn't match new password"), 400
-        except:
-            return jsonify(response="The reset link is invalid or has expired", success=False), 201
-
-                
-    else: 
-        email = request.form['email']
-        user = db.session.query(Users).filter_by(email=email).first()
-    
-        if user: 
-            token = generate_confirmation_token(user.email) 
-
-            confirm_url = 'https://wocpr.com/resetpassword/'+token 
-            html = render_template('resetPasswordEmail.html', confirm_url=confirm_url)
-            subject = "What's On Campus - Reset your password"
-            send_email(user.email, subject, html)
-            return jsonify(success=True, response="Reset password email sent!"), 201
-        else: 
-            return jsonify(success=False, response="Email doesn't exists"), 400
 
 @app.route('/WhatsOnCampus/events', methods=['GET', 'POST'])
 @jwt_optional
