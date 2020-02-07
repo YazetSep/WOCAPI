@@ -1,10 +1,12 @@
+import bcrypt
 import datetime
 
 from flask_login import UserMixin
 from sqlalchemy import ForeignKey, Table
 from sqlalchemy.orm import relationship
 
-from __init__ import db, Base
+from main import Base
+from __init__ import db
 
 savedevents_table = Table('savedevents', Base.metadata,
                           db.Column('eid', db.Integer, ForeignKey('events.eid'), nullable=False),
@@ -31,32 +33,73 @@ class Categories(Base):
 class Users(UserMixin, Base):
     __tablename__ = 'users'
     id = db.Column('uid', db.Integer, primary_key=True)
-    displayname = db.Column('displayname', db.String(50), nullable=False)
-    email = db.Column('email', db.String(50), nullable=False)
+    display_name = db.Column('displayname', db.String(50), nullable=False)
+    email = db.Column('email', db.String(50), nullable=False, unique=True)
     password = db.Column('password', db.String(200), nullable=False)
-    firstName = db.Column('first', db.String(50), nullable=True)
-    lastName = db.Column('last', db.String(50), nullable=True)
+    first_name = db.Column('first', db.String(50), nullable=True)
+    last_name = db.Column('last', db.String(50), nullable=True)
     activated = db.Column('activated', db.Boolean, nullable=False)
-    dateOfBirth = db.Column('dateofbirth', db.Date, nullable=True)
-    dateCreated = db.Column('datecreated', db.DateTime, default=datetime.datetime.utcnow())
+    date_of_birth = db.Column('dateofbirth', db.Date, nullable=True)
+    date_created = db.Column('datecreated', db.DateTime, default=datetime.datetime.utcnow())
 
-    savedevents = relationship('Events', secondary=savedevents_table)
+    saved_events = relationship('Events', secondary=savedevents_table)
     rsvp = relationship('Events', secondary=rsvp_table)
 
     rank = relationship('Ranks', backref='users')
 
+    def add_or_remove_saved_event(self, event):
+        if event in self.savedevents:
+            self.savedevents.remove(event)
+            saved = False
+        else:
+            self.savedevents.append(event)
+            saved = True
+        db.session.commit()
+        return saved
+
+    def rsvp_or_unrsvp(self, event):
+        if self in event.rsvp:
+            self.rsvp.remove(event)
+            db.session.commit()
+            rsvp = False
+        else:
+            self.rsvp.append(event)
+            db.session.commit()
+            rsvp = True
+        return rsvp
+
     @staticmethod
-    def build_user_dict(user):
+    def get_user_by_email(email):
+        return db.session.query(Users).filter(Users.email == email).first()
+
+    @staticmethod
+    def create_user(data):
+        hashed_password = bcrypt.hashpw(data['password'].encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+        new_user = Users(
+            displayname=data['displayname'],
+            email=data['email'],
+            password=hashed_password,
+            firstName=data['firstname'],
+            lastName=data['lastname'],
+            activated=0,
+            dateOfBirth=None
+        )
+        db.session.add(new_user)
+        db.session.commit()
+
+    def build_user_dict(self):
         # rank = user.rank
-        result = {'uid': user.id, 'displayname': user.displayname, 'email': user.email,
-                  'activated': user.activated}  # , 'rank': rank
+        result = {'uid': self.id, 'displayname': self.displayname, 'email': self.email,
+                  'activated': self.activated}  # , 'rank': rank
         return result
+
 
 class Ranking(Base):
     __tablename__ = 'ranking'
     id = db.Column(db.Integer(), primary_key=True)
     name = db.Column(db.String(80), unique=True)
     description = db.Column(db.String(255))
+
 
 class Ranks(Base):
     __tablename__ = 'ranks'
@@ -65,12 +108,13 @@ class Ranks(Base):
     rank = db.Column('rank', db.Integer, ForeignKey(Ranking.id))
 
     user = relationship('Users')
-    ranking = relationship('Ranking') 
+    ranking = relationship('Ranking')
 
     @staticmethod
     def build_rank_dict(rank):
         result = {'rank': rank.rank}
         return result
+
 
 class Events(Base):
     __tablename__ = 'events'
@@ -92,27 +136,30 @@ class Events(Base):
     rsvp = relationship('Users', secondary=rsvp_table)
 
     @staticmethod
-    def build_event_dict(event, user):
+    def get_event_by_id(eid):
+        return db.session.query(Events).filter(Events.eid == eid).first()
+
+    def build_event_dict(self, user):
         saved = False
         if user is not None:
-            eids = [event.eid for event in user.savedevents]
-            saved = True if event.eid in eids else False
+            eids = [self.eid for event in user.savedevents]
+            saved = self.eid in eids
 
-        posted_by = event.postedBy.displayname
+        posted_by = self.postedBy.displayname
         result = {
-            'eid': event.eid,
-            'title': event.title,
-            'briefDescription': event.briefDescription,
-            'dateTimestamp': event.startTime,
-            'startHour': event.startTime,
-            'endHour': event.endTime,
-            'imageurl': event.imageurl,
-            'place': event.place,
-            'categoryName': event.categoryname,
-            'contactEmail': event.contactEmail,
+            'eid': self.eid,
+            'title': self.title,
+            'briefDescription': self.briefDescription,
+            'dateTimestamp': self.startTime,
+            'startHour': self.startTime,
+            'endHour': self.endTime,
+            'imageurl': self.imageurl,
+            'place': self.place,
+            'categoryName': self.categoryname,
+            'contactEmail': self.contactEmail,
             'postedBy': posted_by,
-            'fullDescription': event.fullDescription,
-            'contactPhone': event.contactPhone,
+            'fullDescription': self.fullDescription,
+            'contactPhone': self.contactPhone,
             'saved': saved
         }
         return result
@@ -126,6 +173,10 @@ class EventAnalytics(Base):
     saved_count = db.Column('saved_count', db.Integer, default=0)
 
     event = relationship('Events', foreign_keys='EventAnalytics.eid')
+
+    @staticmethod
+    def get_event_analytic_by_id(eid):
+        return db.session.query(EventAnalytics).filter(EventAnalytics.eid == eid).first()
 
     @staticmethod
     def buld_analytic_dict(analytic):
